@@ -6,9 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.models.case import Case
+from app.models.folder import Folder
 from app.models.redaction import RedactionJob
 from app.models.user import User
-from app.models.video import Video, VideoVersion, VideoVersionKind
+from app.models.video import StorageTier, Video, VideoVersion, VideoVersionKind
 from app.schemas.redaction import (
     AutoTrackRequest,
     DetectFacesRequest,
@@ -16,7 +18,7 @@ from app.schemas.redaction import (
     RedactionJobOut,
 )
 from app.security import get_current_user
-from app.services import redaction_service, storage_service
+from app.services import redaction_service, storage_service, watermark_service
 from app.services.audit_service import log_action
 
 router = APIRouter(tags=["redaction"])
@@ -165,27 +167,51 @@ def get_redaction_job(job_id: uuid.UUID, db: Session = Depends(get_db)) -> Redac
 def publish_disclosure_copy(
     video_id: uuid.UUID,
     version_id: uuid.UUID,
+    apply_watermark: bool = True,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict:
     """Republishes a redacted version as a disclosure copy — the artifact
-    that ultimately gets shared/watermarked externally, kept as its own
-    immutable version so the redacted "working copy" and the disclosure
-    copy stay distinguishable in the version history."""
+    that ultimately gets shared externally, kept as its own immutable
+    version so the redacted "working copy" and the disclosure copy stay
+    distinguishable in the version history. Burns in the publisher's
+    effective watermark (user override, else the admin-configured global
+    one) unless `apply_watermark=false` or none is configured/enabled."""
     video = _get_video(db, video_id)
     source_version = _get_version(db, version_id)
     if source_version.video_id != video.id:
         raise HTTPException(status_code=400, detail="Version does not belong to this video")
 
     dest_key = f"videos/{video.id}/disclosure/{uuid.uuid4()}.mp4"
-    storage_service.copy_object(source_version.storage_tier, source_version.storage_key, dest_key)
+    watermarked = False
+
+    watermark = watermark_service.get_effective_watermark(db, user) if apply_watermark else None
+    if watermark and watermark.enabled_for_export:
+        folder = db.get(Folder, video.folder_id)
+        case = db.get(Case, folder.case_id) if folder else None
+        text = watermark_service.render_template(
+            watermark.template,
+            viewer_name=user.name,
+            viewer_email=user.email,
+            case_name=case.name if case else "",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source_local = _download_version(source_version, tmp_path)
+            output_local = tmp_path / "disclosure.mp4"
+            watermark_service.burn_in_watermark(source_local, output_local, text)
+            storage_service.put_file(StorageTier.HOT, dest_key, str(output_local))
+        watermarked = True
+    else:
+        storage_service.copy_object(source_version.storage_tier, source_version.storage_key, dest_key)
 
     disclosure = VideoVersion(
         video_id=video.id,
         parent_version_id=source_version.id,
         kind=VideoVersionKind.DISCLOSURE,
         storage_key=dest_key,
-        storage_tier=source_version.storage_tier,
+        storage_tier=StorageTier.HOT if watermarked else source_version.storage_tier,
+        watermark_applied=watermarked,
         created_by=user.id,
         notes="Disclosure copy published for sharing.",
     )

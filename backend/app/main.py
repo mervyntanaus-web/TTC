@@ -1,7 +1,32 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, connectors, folders, ingestion, playback, redaction, search, transcripts
+from app.api.routes import (
+    archive,
+    audit,
+    auth,
+    connectors,
+    folders,
+    ingestion,
+    playback,
+    redaction,
+    reports,
+    retention,
+    search,
+    sharing,
+    transcripts,
+    watermark,
+)
+from app.worker.jobs import start_scheduler, stop_scheduler
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    start_scheduler()
+    yield
+    stop_scheduler()
 
 app = FastAPI(
     title="TTC DEMS Video Platform",
@@ -10,6 +35,7 @@ app = FastAPI(
         "playback, redaction, and chain-of-custody for TTC."
     ),
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -28,6 +54,12 @@ app.include_router(playback.router)
 app.include_router(redaction.router)
 app.include_router(transcripts.router)
 app.include_router(search.router)
+app.include_router(sharing.router)
+app.include_router(watermark.router)
+app.include_router(audit.router)
+app.include_router(retention.router)
+app.include_router(archive.router)
+app.include_router(reports.router)
 
 
 @app.get("/health")
