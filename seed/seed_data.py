@@ -3,15 +3,20 @@
 Creates demo users (one per role), a demo case with nested folders, and
 registers the mock VMS connector's simulated cameras. Safe to re-run.
 
-Usage: python -m seed.seed_data   (run from the backend's environment, with
-PYTHONPATH including backend/ so `app.*` imports resolve)
+Usage:
+  - Locally: python -m seed.seed_data  (run from the repo root; this file
+    adds ../backend to sys.path so `app.*` imports resolve)
+  - In the backend's own container (docker-compose's `seed` service),
+    `app` is already importable at /app, so no path juggling is needed.
 """
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
-
-from app.db import Base, SessionLocal, engine  # noqa: E402
+try:
+    from app.db import Base, SessionLocal, engine  # noqa: E402
+except ModuleNotFoundError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
+    from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.models.case import Case  # noqa: E402
 from app.models.folder import Folder  # noqa: E402
 from app.models.retention import RetentionPolicy  # noqa: E402
