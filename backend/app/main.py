@@ -19,11 +19,13 @@ from app.api.routes import (
     transcripts,
     watermark,
 )
+from app.services import storage_service
 from app.worker.jobs import start_scheduler, stop_scheduler
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    storage_service.ensure_buckets()
     start_scheduler()
     yield
     stop_scheduler()

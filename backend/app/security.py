@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -40,11 +40,17 @@ def decode_access_token(token: str) -> dict:
 
 
 def get_current_user(
-    token: str | None = Depends(oauth2_scheme), db: Session = Depends(get_db)
+    token: str | None = Depends(oauth2_scheme),
+    token_qs: str | None = Query(default=None, alias="token"),
+    db: Session = Depends(get_db),
 ) -> User:
-    if not token:
+    # HTML <video>/<img> elements can't set an Authorization header, so
+    # streaming endpoints (video playback) need a fallback way to
+    # authenticate; a `?token=` query param is the standard workaround.
+    resolved_token = token or token_qs
+    if not resolved_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    payload = decode_access_token(token)
+    payload = decode_access_token(resolved_token)
     user = db.get(User, uuid.UUID(payload["sub"]))
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
